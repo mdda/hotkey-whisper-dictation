@@ -102,17 +102,18 @@ def save_and_transcribe_audio():
 
 
 # 2 Listeners for keyboard activity
+key_combo = [keyboard.Key.ctrl_l, keyboard.Key.alt_l, keyboard.KeyCode.from_char('w')]
+
 def on_press(key):
   global is_recording
-  if all(k in current_keys for k in 
-        [keyboard.Key.ctrl_l, keyboard.Key.alt_l, keyboard.KeyCode.from_char('w')]):
+  if all(k in current_keys for k in key_combo):
     if not is_recording:
       print("All hotkeys pressed : Start recording!")
       start_recording()
 
 def on_release(key):
   global is_recording
-  if key in [keyboard.Key.ctrl_l, keyboard.Key.alt_l, keyboard.KeyCode.from_char('w')]:
+  if key in key_combo:
     if is_recording:
       print("Released something relevant : Stop recording!")
       stop_recording()  # This processes the audio
