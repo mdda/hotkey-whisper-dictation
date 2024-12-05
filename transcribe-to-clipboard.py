@@ -125,6 +125,6 @@ def on_release(key):
 current_keys = set()
 with keyboard.Listener(
     on_press=lambda key: current_keys.add(key) or on_press(key),
-    on_release=lambda key: current_keys.remove(key) or on_release(key)
+    on_release=lambda key: current_keys.discard(key) or on_release(key)
   ) as listener:
   listener.join()
