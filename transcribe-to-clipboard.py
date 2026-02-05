@@ -1,4 +1,4 @@
-import io, wave
+import io, wave, base64, requests
 import pyaudio
 import pyperclip
 from pynput import keyboard
@@ -8,9 +8,17 @@ import yaml
 with open('simple.conf') as conffile:
     conf = yaml.safe_load(conffile)
 
-# OpenAI API key setup
-from openai import OpenAI
-client = OpenAI(api_key = conf['openai']['api_key'])
+# API setup - prioritize Gemini if key exists (and isn't a placeholder)
+GEMINI_API_KEY = conf.get('gemini', {}).get('api_key', '')
+USE_GEMINI = GEMINI_API_KEY and not GEMINI_API_KEY.startswith('YOUR_')
+
+if USE_GEMINI:
+    GEMINI_MODEL = conf['gemini'].get('model', 'gemini-2.0-flash')
+    print(f"Using Google Gemini ({GEMINI_MODEL}) for transcription")
+else:
+    from openai import OpenAI
+    client = OpenAI(api_key = conf['openai']['api_key'])
+    print("Using OpenAI Whisper for transcription")
 
 import subprocess
 def show_notification(title, message):
@@ -27,6 +35,7 @@ def show_notification(title, message):
 FORMAT, CHANNELS = pyaudio.paInt16, 1
 CHUNK = 1024
 
+print("\n\n----------------------Initialising PyAudio----------------------")
 audio = pyaudio.PyAudio()
 
 audio_device_index = conf['audio']['device']
@@ -66,7 +75,7 @@ def _get_callback():
   def callback(in_data, frame_count, time_info, status):
     global frames # , stream
     frames.append(in_data)
-    #print(f"Continuing Recording... {len(frames)=}")
+    print(f"Continuing Recording... {len(frames)=}")
     return in_data, pyaudio.paContinue
   return callback
 
@@ -88,24 +97,55 @@ def save_and_transcribe_audio():
   wf.writeframes(b''.join(frames))  # These are globally stored...
   wf.close()
 
-  show_notification("Transcribe-to-Clipboard", "Sending to OpenAI whisper API")
-  print(f"Sending buffer to OpenAI whisper API")
-  # https://platform.openai.com/docs/api-reference/audio/createTranscription
-  transcript = client.audio.transcriptions.create(
-    model='whisper-1', 
-    file=buffer, 
-    response_format='text' 
-  )  
+  if USE_GEMINI:
+    show_notification("Transcribe-to-Clipboard", "Sending to Gemini API")
+    print(f"Sending buffer to Gemini API")
+    transcript = transcribe_with_gemini(buffer)
+  else:
+    show_notification("Transcribe-to-Clipboard", "Sending to OpenAI whisper API")
+    print(f"Sending buffer to OpenAI whisper API")
+    # https://platform.openai.com/docs/api-reference/audio/createTranscription
+    transcript = client.audio.transcriptions.create(
+      model='whisper-1',
+      file=buffer,
+      response_format='text'
+    )
+  transcript = transcript.strip()
   print("Transcription: ", transcript)
   pyperclip.copy(transcript)
   show_notification("Transcribe-to-Clipboard", f"{transcript[:100]}...")
 
+def transcribe_with_gemini(buffer):
+  buffer.seek(0)
+  audio_b64 = base64.standard_b64encode(buffer.read()).decode('utf-8')
+
+  url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+
+  payload = {
+    "contents": [{
+      "parts": [
+        {"text": "Transcribe this audio exactly. Output only the transcription, no commentary."},
+        {"inline_data": {"mime_type": "audio/wav", "data": audio_b64}}
+      ]
+    }]
+  }
+
+  response = requests.post(url, json=payload)
+  response.raise_for_status()
+
+  result = response.json()
+  return result['candidates'][0]['content']['parts'][0]['text']
+
 
 # 2 Listeners for keyboard activity
-key_combo = [keyboard.Key.ctrl_l, keyboard.Key.alt_l, keyboard.KeyCode.from_char('w')]
+#key_combo = [keyboard.Key.ctrl_l, keyboard.Key.alt_l, keyboard.KeyCode.from_char('w')]
+# NB: Cannot use 's' or 'z' due to the effect of Ctrl-S and Ctrl-Z on terminal...
+key_combo = [keyboard.Key.cmd, keyboard.KeyCode.from_char('c')]   # Just 'Windows-c' for Speech copy!
+print(f"{key_combo}")
 
 def on_press(key):
   global is_recording
+  #print(f"on_press({key=}, {current_keys=}")
   if all(k in current_keys for k in key_combo):
     if not is_recording:
       print("All hotkeys pressed : Start recording!")
@@ -113,14 +153,13 @@ def on_press(key):
 
 def on_release(key):
   global is_recording
+  #print(f"on_release({key=}, new {current_keys=}")
   if key in key_combo:
     if is_recording:
       print("Released something relevant : Stop recording!")
       stop_recording()  # This processes the audio
       #return False  # Stop listener to exit program after 1 recording
 
-
-# Setting up the listener for the keyboard
 #   Maintain a set of current keys pressed
 current_keys = set()
 with keyboard.Listener(

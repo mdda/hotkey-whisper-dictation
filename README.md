@@ -1,5 +1,5 @@
 # Linux Transcription on hotkey
-##  First backend : Whisper (via OpenAI API
+##  First backend : Whisper (via OpenAI API)
 
 
 ### Installation (Fedora)
@@ -11,7 +11,8 @@ sudo dnf install portaudio-devel xclip
 ```bash
 . ~/env312/bin/activate
 uv pip install pyyaml   # Configuration file reading
-uv pip install openai   # OpenAI API for Whisper
+#uv pip install openai   # OpenAI API for Whisper
+#uv pip install requests  # REST access for Google speech ingestion (Gemini-Flash?)
 uv pip install pynput   # Keyboard monitoring
 uv pip install pyaudio  # Audio reading
 uv pip install pyperclip  # Clipboard interface
