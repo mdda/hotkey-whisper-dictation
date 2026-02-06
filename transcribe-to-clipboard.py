@@ -140,7 +140,8 @@ def transcribe_with_gemini(buffer):
 # 2 Listeners for keyboard activity
 #key_combo = [keyboard.Key.ctrl_l, keyboard.Key.alt_l, keyboard.KeyCode.from_char('w')]
 # NB: Cannot use 's' or 'z' due to the effect of Ctrl-S and Ctrl-Z on terminal...
-key_combo = [keyboard.Key.cmd, keyboard.KeyCode.from_char('c')]   # Just 'Windows-c' for Speech copy!
+#key_combo = [keyboard.Key.cmd, keyboard.KeyCode.from_char('c')]   # Just 'Windows-c' for Speech copy!
+key_combo = [keyboard.Key.cmd, keyboard.Key.tab]   # Just 'Windows-Tab' for Speech copy!
 print(f"\n\nActions:\n* Press-to-Talk - {key_combo=};\n* Release to copy to clipboard; and\n* Ctrl-c to exit")
 
 def on_press(key):
