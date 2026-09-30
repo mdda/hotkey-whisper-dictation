@@ -4,36 +4,40 @@
 
 ### Installation (Fedora)
 
-```bash
-sudo dnf install portaudio-devel xclip
-```
+This project uses [`uv`](https://docs.astral.sh/uv/) with dependencies declared inline in
+`transcribe-to-clipboard.py` (PEP 723), so there's no virtual environment to create or
+activate by hand - `uv run` resolves and caches everything automatically the first time
+it's run.
 
 ```bash
-. ~/env312/bin/activate
-uv pip install pyyaml   # Configuration file reading
-#uv pip install openai   # OpenAI API for Whisper
-#uv pip install requests  # REST access for Google speech ingestion (Gemini-Flash?)
-uv pip install pynput   # Keyboard monitoring
-uv pip install pyaudio  # Audio reading
-uv pip install pyperclip  # Clipboard interface
-#uv pip install notify2 pydbus  # NOPE - notifications done via command line subprocess
+sudo dnf install gcc python3-devel xclip
 ```
+
+(`gcc` + `python3-devel` are needed once, to build `evdev`, a dependency of the `pynput`
+keyboard-monitoring library. `xclip` is needed at runtime for clipboard access. Audio
+capture uses `sounddevice`, which only needs the `portaudio` runtime library - already
+present on most Fedora installs.)
 
 ### Running
 
-Copy `TEMPLATE_simple.conf` to `simple.conf`, and update with your OpenAI API key.
+Copy `TEMPLATE_simple.conf` to `simple.conf`, and update with your OpenAI or Gemini API key.
 
 Run the following:
 ```bash
-. ~/env312/bin/activate
-python transcribe-to-clipboard.py
+./start-listening
 ```
+(equivalent to `uv run transcribe-to-clipboard.py`, but can be invoked from any directory -
+handy for autostart entries.)
 
 If the index of the audio device for recording isn't correct, put the new index value
 from the list of devices into your `simple.conf` and restart 
 
-The current "Press-and-Hold" walkie-talkie hotkey combo is `Ctrl-Alt-w`.
-This can be changed by looking for `key_combo=[]` in the code.
+There are two "Press-and-Hold" walkie-talkie hotkeys:
+* `Windows-Alt-c` - transcribes and copies the result to the clipboard.
+* `Windows-Alt-v` - transcribes and types the result directly at the current cursor
+  position (via simulated keystrokes - no clipboard involved).
+
+These can be changed by looking for `HOTKEYS = {}` in the code.
 
 The `transcribe-to-clipboard.py` program can just be left running in the background - 
 it's light-weight, and the only data ever to get sent up to OpenAI is the audio

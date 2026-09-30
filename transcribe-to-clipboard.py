@@ -1,5 +1,18 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "numpy",
+#     "openai",
+#     "pynput",
+#     "pyperclip",
+#     "pyyaml",
+#     "requests",
+#     "sounddevice",
+# ]
+# ///
 import io, wave, base64, requests
-import pyaudio
+import numpy as np
+import sounddevice as sd
 import pyperclip
 from pynput import keyboard
 
@@ -32,27 +45,19 @@ def show_notification(title, message):
 
 
 # Setup audio stream parameters
-FORMAT, CHANNELS = pyaudio.paInt16, 1
+CHANNELS = 1
 CHUNK = 1024
-
-print("\n\n----------------------Initialising PyAudio----------------------")
-audio = pyaudio.PyAudio()
 
 audio_device_index = conf['audio']['device']
 print("\n\n----------------------Recording device list---------------------")
-info = audio.get_host_api_info_by_index(0)
-numdevices = info.get('deviceCount')
-for i in range(0, numdevices):
-  device_info = audio.get_device_info_by_host_api_device_index(0, i)
-  #print(device_info.keys())
-  if device_info.get('maxInputChannels')>0:
+for i, device_info in enumerate(sd.query_devices()):
+  if device_info.get('max_input_channels')>0:
     print(f"{'**' if audio_device_index==i else '  '} Input Device id {i} "+
           f" {device_info.get('name')} "+
-          f" @{device_info.get('defaultSampleRate')}Hz")
+          f" @{device_info.get('default_samplerate')}Hz")
 print("-------------------------------------------------------------")
 
-audio_device_info = audio.get_device_info_by_host_api_device_index(0, audio_device_index)
-SAMPLE_RATE = int( audio_device_info.get('defaultSampleRate') )
+SAMPLE_RATE = int( sd.query_devices(audio_device_index).get('default_samplerate') )
 
 # Globals to manage ongoing recordings
 frames = []  # A buffer to store audio chunks
@@ -63,38 +68,38 @@ def start_recording():
   global is_recording, frames, stream
   frames = []
   is_recording = True
-  stream = audio.open(format=FORMAT, channels=CHANNELS,
-                      rate=SAMPLE_RATE, input=True,
-                      frames_per_buffer=CHUNK,
-                      input_device_index=audio_device_index,
-                      stream_callback = _get_callback(),
-                      )
+  stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS,
+                          dtype='int16', blocksize=CHUNK,
+                          device=audio_device_index,
+                          callback=_get_callback(),
+                          )
+  stream.start()
   print("Recording started...")
 
 def _get_callback():
-  def callback(in_data, frame_count, time_info, status):
-    global frames # , stream
-    frames.append(in_data)
+  def callback(indata, frame_count, time_info, status):
+    global frames
+    frames.append(indata.copy())
     print(f"Continuing Recording... {len(frames)=}")
-    return in_data, pyaudio.paContinue
   return callback
 
-def stop_recording():
+def stop_recording(action):
   global is_recording, stream
   is_recording = False
   print(f"Recording finished : {len(frames)=}")
-  stream.stop_stream()
+  stream.stop()
   stream.close()
-  save_and_transcribe_audio()
+  save_and_transcribe_audio(action)
 
-def save_and_transcribe_audio():
+def save_and_transcribe_audio(action):
   buffer = io.BytesIO()  # Using a buffer requires no temporary on-disk file
   buffer.name = "buffer.wav"
+  audio_data = np.concatenate(frames, axis=0) if frames else np.zeros((0, CHANNELS), dtype='int16')
   wf = wave.open(buffer, 'wb')
   wf.setnchannels(CHANNELS)
-  wf.setsampwidth(audio.get_sample_size(FORMAT))
+  wf.setsampwidth(2)  # int16 = 2 bytes
   wf.setframerate(SAMPLE_RATE)
-  wf.writeframes(b''.join(frames))  # These are globally stored...
+  wf.writeframes(audio_data.tobytes())
   wf.close()
 
   if USE_GEMINI:
@@ -112,8 +117,12 @@ def save_and_transcribe_audio():
     )
   transcript = transcript.strip()
   print("Transcription: ", transcript)
-  pyperclip.copy(transcript)
-  show_notification("Transcribe-to-Clipboard", f"{transcript[:100]}...")
+  if action == 'type':
+    type_text(transcript, HOTKEYS[action])
+    show_notification("Transcribe-to-Clipboard", f"Typed: {transcript[:100]}...")
+  else:
+    pyperclip.copy(transcript)
+    show_notification("Transcribe-to-Clipboard", f"{transcript[:100]}...")
 
 def transcribe_with_gemini(buffer):
   buffer.seek(0)
@@ -137,29 +146,71 @@ def transcribe_with_gemini(buffer):
   return result['candidates'][0]['content']['parts'][0]['text']
 
 
+import time
+
+keyboard_controller = keyboard.Controller()
+
+def type_text(text, combo):
+  # The key that ended the combo has just been released, but held modifiers
+  # (cmd/alt) may still be physically down - wait for them to clear so the
+  # synthetic keystrokes below aren't interpreted as more Alt/Cmd shortcuts.
+  deadline = time.time() + 3.0
+  while any(k in current_keys for k in combo) and time.time() < deadline:
+    time.sleep(0.02)
+  keyboard_controller.type(text)
+
 # 2 Listeners for keyboard activity
 #key_combo = [keyboard.Key.ctrl_l, keyboard.Key.alt_l, keyboard.KeyCode.from_char('w')]
 # NB: Cannot use 's' or 'z' due to the effect of Ctrl-S and Ctrl-Z on terminal...
 #key_combo = [keyboard.Key.cmd, keyboard.Key.tab]   # Just 'Windows-Tab' for Speech copy! # But AIstudio/Chrome hates it!
-key_combo = [keyboard.Key.cmd, keyboard.Key.alt_l, keyboard.KeyCode.from_char('c')]   # Just 'Windows-Alt-c' for Speech copy!
-print(f"\n\nActions:\n* Press-to-Talk - {key_combo=};\n* Release to copy to clipboard; and\n* Ctrl-c to exit")
+HOTKEYS = {
+  'clipboard': [keyboard.Key.cmd, keyboard.Key.alt_l, keyboard.KeyCode.from_char('c')],  # Windows-Alt-c
+  'type':      [keyboard.Key.cmd, keyboard.Key.alt_l, keyboard.KeyCode.from_char('v')],  # Windows-Alt-v
+}
+
+KEY_LABELS = {
+  keyboard.Key.cmd: 'Windows', keyboard.Key.cmd_l: 'Windows', keyboard.Key.cmd_r: 'Windows',
+  keyboard.Key.alt: 'Alt', keyboard.Key.alt_l: 'Alt', keyboard.Key.alt_r: 'Alt', keyboard.Key.alt_gr: 'AltGr',
+  keyboard.Key.ctrl: 'Ctrl', keyboard.Key.ctrl_l: 'Ctrl', keyboard.Key.ctrl_r: 'Ctrl',
+  keyboard.Key.shift: 'Shift', keyboard.Key.shift_l: 'Shift', keyboard.Key.shift_r: 'Shift',
+}
+
+def format_key(key):
+  if key in KEY_LABELS:
+    return KEY_LABELS[key]
+  if isinstance(key, keyboard.KeyCode) and key.char:
+    return key.char
+  return str(key)
+
+def format_combo(combo):
+  return '-'.join(format_key(k) for k in combo)
+
+print("\n\nActions:")
+print(f"* Press-to-Talk {format_combo(HOTKEYS['clipboard'])} - Release to copy transcript to clipboard")
+print(f"* Press-to-Talk {format_combo(HOTKEYS['type'])} - Release to type transcript at the cursor")
+print("* Ctrl-c to exit")
+
+active_action = None
 
 def on_press(key):
-  global is_recording
+  global is_recording, active_action
   #print(f"on_press({key=}, {current_keys=}")
-  if all(k in current_keys for k in key_combo):
-    if not is_recording:
-      print("All hotkeys pressed : Start recording!")
+  if is_recording:
+    return
+  for action, combo in HOTKEYS.items():
+    if all(k in current_keys for k in combo):
+      print(f"All hotkeys pressed : Start recording! ({action=})")
+      active_action = action
       start_recording()
+      break
 
 def on_release(key):
-  global is_recording
+  global is_recording, active_action
   #print(f"on_release({key=}, new {current_keys=}")
-  if key in key_combo:
-    if is_recording:
-      print("Released something relevant : Stop recording!")
-      stop_recording()  # This processes the audio
-      #return False  # Stop listener to exit program after 1 recording
+  if is_recording and active_action is not None and key in HOTKEYS[active_action]:
+    print("Released something relevant : Stop recording!")
+    stop_recording(active_action)  # This processes the audio
+    active_action = None
 
 #   Maintain a set of current keys pressed
 current_keys = set()
